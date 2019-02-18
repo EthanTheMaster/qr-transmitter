@@ -1,0 +1,219 @@
+<html>
+    <body>
+        <h3 id="progress">0%</h3>
+        <h3 id="pending">Pending Blocks: 0</h3>        
+        <canvas id="canvas"></canvas>
+
+        <script src="jsQR.js"></script>
+    
+        <script>
+            function xor_shift(rng_state) {
+                let x = rng_state.state;
+                x ^= (x << 13) >>> 0;
+                x ^= (x >>> 17) >>> 0;
+                x ^= (x << 5) >>> 0;
+
+                rng_state.state = x;
+                return x;
+            }
+
+            //Set up video elements
+            var video = document.createElement("video");
+            var canvasElement = document.getElementById("canvas");
+            var progressElement = document.getElementById("progress");
+            var pendingElement = document.getElementById("pending");
+            var canvas = canvasElement.getContext("2d");
+
+            function drawLine(begin, end, color) {
+                canvas.beginPath();
+                canvas.moveTo(begin.x, begin.y);
+                canvas.lineTo(end.x, end.y);
+                canvas.lineWidth = 4;
+                canvas.strokeStyle = color;
+                canvas.stroke();
+            }
+
+            // Use facingMode: environment to attemt to get the front camera on phones
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function(stream) {
+                video.srcObject = stream;
+                video.setAttribute("playsinline", true); // required to tell iOS safari we don't want fullscreen
+                video.play();
+                requestAnimationFrame(tick);
+            });
+
+            var data = new Uint8Array();
+            var pending_blocks = [];
+            var decoded_blocks = new Set();
+            var failed_parity = 0;
+
+            var finished_download = false;
+            var blob = new Blob();
+            var link = document.createElement('a');
+
+            
+
+            function tick() {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvasElement.hidden = false;
+
+                    canvasElement.height = video.videoHeight;
+                    canvasElement.width = video.videoWidth;
+                    canvas.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+                    var imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                    var code = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: "dontInvert",
+                    });
+                    if (code) {
+                        drawLine(code.location.topLeftCorner, code.location.topRightCorner, "#FF3B58");
+                        drawLine(code.location.topRightCorner, code.location.bottomRightCorner, "#FF3B58");
+                        drawLine(code.location.bottomRightCorner, code.location.bottomLeftCorner, "#FF3B58");
+                        drawLine(code.location.bottomLeftCorner, code.location.topLeftCorner, "#FF3B58");
+
+                        //Code has been detected
+                        // console.log(code)
+                        if (code.binaryData.length % 20 == 0) {
+                            var data_copy = code.binaryData;
+
+                            while (data_copy.length != 0) {
+                                //Extract Packet Out by grabbing first 20 bytes
+                                var packet = data_copy.splice(0, 20);
+
+                                //Start decoding LT Code
+
+                                //Decode total size
+                                var total_size = 0;
+                                total_size |= (packet[0] << 24) >>> 0;
+                                total_size |= (packet[1] << 16) >>> 0;
+                                total_size |= (packet[2] << 8) >>> 0;
+                                total_size |= (packet[3]) >>> 0;
+
+                                //Decode degree
+                                var degree = 0;
+                                degree |= (packet[4] << 24) >>> 0;
+                                degree |= (packet[5] << 16) >>> 0;
+                                degree |= (packet[6] << 8) >>> 0;
+                                degree |= (packet[7])  >>> 0;
+
+                                //Decode degree
+                                var rng_state = {state: 0};
+                                rng_state.state |= (packet[8] << 24) >>> 0;
+                                rng_state.state |= (packet[9] << 16) >>> 0;
+                                rng_state.state |= (packet[10] << 8) >>> 0;
+                                rng_state.state |= (packet[11]) >>> 0;
+
+                                //Decode xored block indices
+                                var xor_block_indices = 0;
+                                xor_block_indices |= (packet[12] << 24) >>> 0;
+                                xor_block_indices |= (packet[13] << 16) >>> 0;
+                                xor_block_indices |= (packet[14] << 8) >>> 0;
+                                xor_block_indices |= (packet[15]) >>> 0;
+
+                                //Decode xored block content
+                                var xor_block_content = packet[16];
+
+                                //Decode parity bytes
+                                var parity_bytes = 0;
+                                parity_bytes |= (packet[17] << 16) >>> 0;
+                                parity_bytes |= (packet[18] << 8) >>> 0;
+                                parity_bytes |= (packet[19]) >>> 0;
+
+                                //Verify transmission was correct by generating parity
+                                var parity_rng = {state: rng_state.state}
+                                var parity_gen = xor_shift(parity_rng) >>> 0;
+                                parity_rng = {state: (parity_gen ^ total_size)};
+                                parity_gen = xor_shift(parity_rng) >>> 0;
+                                parity_rng = {state: (parity_gen ^ degree)};
+                                parity_gen = xor_shift(parity_rng) >>> 0;
+                                parity_rng = {state: (parity_gen ^ xor_block_indices)};
+                                parity_gen = xor_shift(parity_rng) >>> 0;
+                                parity_rng = {state: (parity_gen ^ xor_block_content)};
+                                parity_gen = xor_shift(parity_rng) >>> 0;
+
+                                if ((parity_gen & 0xFFFFFF) >>> 0 != parity_bytes) {
+                                    console.log("Parity Failed!");
+                                    failed_parity += 1;
+                                    continue;
+                                }                            
+                                
+
+                                if (data.length == 0) {
+                                    //Initiate Empty array
+                                    console.log("Intitated Data!")
+                                    data = new Uint8Array(total_size);
+                                }
+
+                                //Block is already in decoded state
+                                if (degree == 1) {
+                                    decoded_blocks.add(xor_block_indices >>> 0);
+                                    data[xor_block_indices >>> 0] = xor_block_content >>> 0;
+                                } else {
+                                    //Attempt to partially decode the block
+                                    unsolved_idx = [];
+                                    for (var i = 0; i < degree; i++) {
+                                        var idx = (xor_shift(rng_state) >>> 0) % data.length;
+                                        if (decoded_blocks.has(idx)) {
+                                            xor_block_indices = (xor_block_indices >>> 0) ^ idx;
+                                            xor_block_content = (xor_block_content >>> 0) ^ data[idx];
+                                        } else {
+                                            unsolved_idx.push(idx);
+                                        }
+                                    }
+                                    pending_blocks.push({
+                                        indices: unsolved_idx,
+                                        xor_indices: xor_block_indices,
+                                        xor_content: xor_block_content,
+                                    });
+                                }
+
+                                //Update Pending List
+                                pending_blocks = pending_blocks.filter(function(block, i, arr) {
+                                    //Filter out indices that have already been decoded before
+                                    arr[i].indices = block.indices.filter(idx => {
+                                        if (decoded_blocks.has(idx)) {
+                                            arr[i].xor_indices = (arr[i].xor_indices >>> 0) ^ (idx >>> 0);
+                                            arr[i].xor_content = (arr[i].xor_content >>> 0) ^ (data[idx >>> 0] >>> 0);
+                                            //Don't keep this indices
+                                            return false;
+                                        } else {
+                                            return true;
+                                        }
+                                    });
+
+                                    if (block.indices.length == 0) {
+                                        return false;
+                                    } else if (block.indices.length == 1) {
+                                        decoded_blocks.add(block.xor_indices >>> 0);
+                                        data[block.xor_indices >>> 0] = block.xor_content >>> 0;
+                                        return false;
+                                    } else {
+                                        return true;
+                                    }
+                                });
+                                
+                                progressElement.innerHTML = (decoded_blocks.size * 100.0 / total_size).toFixed(2) + "%";
+                                pendingElement.innerHTML = "Pending Blocks: " + pending_blocks.length;
+
+                                if (decoded_blocks.size >= data.length && (!finished_download)) {
+                                    console.log(data);
+                                    alert("Finished Decoding!");
+                                    alert(String.fromCharCode.apply(String, data))
+
+                                    finished_download = true;
+                                    blob = new Blob([data]);
+                                    link.href = window.URL.createObjectURL(blob);
+                                    link.download = "blob";
+                                    link.innerText = "Download Link"
+                                    
+                                    document.body.appendChild(link);
+                                }
+                            }
+                            
+                        }
+                    }
+                }
+                requestAnimationFrame(tick);
+            }
+        
+        </script>
+    </body>
+</html>

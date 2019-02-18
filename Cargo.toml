@@ -1,0 +1,11 @@
+[package]
+name = "qr_transmit"
+version = "0.1.0"
+authors = ["Ethan Lam <elmemphis2000@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+qrcode = "0.6.0"
+piston_window = "0.88.0"
+image = "0.18.0"
+rand = "0.6.5"
