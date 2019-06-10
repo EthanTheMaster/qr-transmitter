@@ -1,5 +1,5 @@
 # What is this?
-This is a toy project written in Rust to showcase fountain codes namely LT Codes. This program works by supplying a file to transmit. A window will then flash QR codes like a fountain spouting water, and the [receiver program](https://github.com/EthanTheMaster/qr-receiver) will capture these QR codes as fast as it can attempting to reconstruct the supplied file like a cup being filled with water hence the name "fountain code". [Here is a demo of the program in action] (https://www.youtube.com/watch?v=Cvwe5HSOPU0)
+This is a toy project written in Rust to showcase fountain codes namely LT Codes. This program works by supplying a file to transmit. A window will then flash QR codes like a fountain spouting water, and the [receiver program](https://github.com/EthanTheMaster/qr-receiver) will capture these QR codes as fast as it can attempting to reconstruct the supplied file like a cup being filled with water hence the name "fountain code". [Here is a demo of the program in action](https://www.youtube.com/watch?v=Cvwe5HSOPU0)
 
 # How to Install
 You will need to install `cargo` to install this Rust project. Inside the project directory, type into the terminal `cargo install --path .` to install the binary.
